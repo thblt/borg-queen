@@ -1,0 +1,21 @@
+#+TITLE: Manage and upgrade Borg drones
+
+Borg Updater is an extension for [[https://github.com/emacscollective/borg][Borg]], providing a visual interface to
+manage and upgrade your drones, along with a few utility functions
+
+* Features
+
+ - **Manually managed upgrades*.  Borg Updater leaves you in full
+   control of what, when and how you upgrade.  You may pull everything
+   to the more recent commit, or just pull two new commits for a
+   specific drone, or maybe pull a drone to the latest commit while
+   downgrading another to an older tag.
+
+ - *Stable or unstable mode*.  Borg Updater allows to upgrade only to
+   new tags or to each new commit.
+
+ - *PGP signatures*.  Borg Updater allows to define (globally or for
+   each drone) a set of valid PGP keys and verify signatures *before*
+   building an updated drone.  It has an extra paranoia mode where it
+   won't upgrade a drone unless it has a list of valid keys for it,
+   and of course the signature can be verified.

@@ -1,11 +1,14 @@
 #+TITLE: Manage and upgrade Borg drones
 
-Borg Updater is an extension for [[https://github.com/emacscollective/borg][Borg]], providing a visual interface to
-manage and upgrade your drones, along with a few utility functions
+Borg Updater is a package management frontend for [[https://github.com/emacscollective/borg][Borg]], providing a
+visual interface to manage and upgrade your drones, along with a few
+utility functions.
 
-* Features
+It features:
 
- - **Manually managed upgrades*.  Borg Updater leaves you in full
+ - A unified package management interface for Borg clones and drones.
+
+ - *Manually managed upgrades*.  Borg Updater leaves you in full
    control of what, when and how you upgrade.  You may pull everything
    to the more recent commit, or just pull two new commits for a
    specific drone, or maybe pull a drone to the latest commit while
@@ -19,3 +22,27 @@ manage and upgrade your drones, along with a few utility functions
    building an updated drone.  It has an extra paranoia mode where it
    won't upgrade a drone unless it has a list of valid keys for it,
    and of course the signature can be verified.
+
+* Standard bindings
+
+These bindings are active in the Borg Manager interface, which is invoked with =M-x borg-manager RET=.
+
+| Binding | Action                                              |
+|---------+-----------------------------------------------------|
+| =u=       | Mark for upgrade                                    |
+| =U=       | Mark for auto upgrade or downgrade (see note below) |
+| =c=       | Mark for upgrade to most recent commit              |
+| =C=       | Prompt for commit, then mark for upgrade            |
+| =t=       | Mark for upgrade to latest tag                      |
+| =T=       | Prompt for  tag, then mark for upgrade              |
+| =A=       | Mark clone for assimilation                         |
+| =R=       | Mark for removal                                    |
+|---------+-----------------------------------------------------|
+| =x=       | Execute marks                                       |
+| =a=       | Assimilate new package as a submodule               |
+| =b=       | Clone new package                                   |
+| =!=       | Commit changes                                      |
+|---------+-----------------------------------------------------|
+| =g=       | Refresh view                                        |
+
+=U= (mark for upgrade or downgrade) will mark for /downgrade/ iff the package is configured to be updated to tags only, it is not currently on a tag, and there are no tags after the current commit.  In this case, it will mark the package for downgrade to the most recent tag.

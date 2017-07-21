@@ -1,9 +1,9 @@
-;;; borg-manager -- Manage, maintain and upgrade Borg packages.
+;;; borg-queen -- Manage, install and upgrade Borg drones.
 
 ;; Copyright (c) 2017 Thibault Polge <thibault@thb.lt>
 
 ;; Author: Thibault Polge <thibault@thb.lt>
-;; Homepage: https://github.com/thblt/borg-manager
+;; Homepage: https://github.com/thblt/borg-queen
 ;; Keywords: tools
 
 ;; This file is free software; you can redistribute it and/or modify
@@ -29,28 +29,28 @@
 (require 'magit)
 (require 'tabulated-list)
 
-(defgroup borg-manager nil
+(defgroup borg-queen nil
   "Manage and update Borg drones."
   )
 
-(defgroup borg-manager-faces nil
-  "Faces for Borg Manager."
-  :group 'borg-manager
+(defgroup borg-queen-faces nil
+  "Faces for Borg Queen."
+  :group 'borg-queen
   )
 
-(defcustom borg-manager-pgp-verify
+(defcustom borg-queen-pgp-verify
   nil
   "If t, no package will be updated without a valid PGP signature."
-  :group 'borg-manager
+  :group 'borg-queen
   )
 
-(defcustom borg-manager-pgp-require-key-list
+(defcustom borg-queen-pgp-require-key-list
   nil
   "If t, no package signature will be verified unless a list if valid keys is provided."
-  :group 'borg-manager
+  :group 'borg-queen
   )
 
-(defcustom borg-manager-upgrade-strategy
+(defcustom borg-queen-upgrade-strategy
   'commit
   "Determine whether to upgrade to tags or commits.
 
@@ -60,12 +60,12 @@ upgrade will go the most recent commit.
 
 'tag (roughly) mimics the behavior of using Melpa Stable.
 
-This property can be overriden for specific drones with `borg-manager-drone-properties'"
-  :group 'borg-manager)
+This property can be overriden for specific drones with `borg-queen-drone-properties'"
+  :group 'borg-queen)
 
-(defcustom borg-manager-drones-properties
+(defcustom borg-queen-drones-properties
   '("borg" (:required t))
-  "An alist of plists of drones properties for use with Borg Manager.
+  "An alist of plists of drones properties for use with Borg Queen.
 
 Entries are of them form (DRONE PROPERTIES), where PROPERTIES is
   either nil or a plist with the following entries:
@@ -78,7 +78,7 @@ Entries are of them form (DRONE PROPERTIES), where PROPERTIES is
   (Default: upstream if set, or the first remote, if not.)
 
   `:upgrade-strategy' -- either 'tag or 'commit (Default:
-  `borg-manager-upgrade-strategy`, see this variable for details)
+  `borg-queen-upgrade-strategy`, see this variable for details)
 
   `:pgp-verify' -- Either t to accept valid signatures from any
   key present in gpg keyring, or a key identifier or a list of
@@ -90,50 +90,50 @@ Entries are of them form (DRONE PROPERTIES), where PROPERTIES is
   This property has _LOWER_ priority than `:pgp-no-verify'.
 
   `:pgp-no-verify' -- t to locally override
-  `borg-manager-pgp-always-verify'.  This has _HIGHER_ priority
+  `borg-queen-pgp-always-verify'.  This has _HIGHER_ priority
   than `:pgp-verify'."
-  :group 'borg-manager
+  :group 'borg-queen
   )
 
-(defface borg-manager-package-name-face
+(defface borg-queen-package-name-face
   '((t :inherit italic))
   "Face for package names"
-  :group 'borg-manager-faces
+  :group 'borg-queen-faces
   )
 
-(defface borg-manager-package-name-required-face
+(defface borg-queen-package-name-required-face
   '((t :inherit bold))
   "Face for required package names"
-  :group 'borg-manager-faces
+  :group 'borg-queen-faces
   )
 
-(defface borg-manager-type-clone-face
+(defface borg-queen-type-clone-face
   '((t :inherit bold))
   "Face for Type column when type is Clone."
-  :group 'borg-manager-faces
+  :group 'borg-queen-faces
   )
 
-(defface borg-manager-type-drone-face
+(defface borg-queen-type-drone-face
   '((t :inherit shadow))
   "Face for Type column when type is Drone."
-  :group 'borg-manager-faces
+  :group 'borg-queen-faces
   )
 
-(defface borg-manager-upgradable-version-face
+(defface borg-queen-upgradable-version-face
   '((t :foreground "#0088cc" :background "#AAAAAA"))
   "Face for Type column when type is Drone."
-  :group 'borg-manager-faces
+  :group 'borg-queen-faces
   )
 
-(defvar borg-manager-mode-map
+(defvar borg-queen-mode-map
   (let ((map (make-keymap)))
-    (define-key map "u" 'borg-manager-mark-for-upgrade)
+    (define-key map "u" 'borg-queen-mark-for-upgrade)
     map)
-  "Keymap for Borg Manager mode.")
+  "Keymap for Borg Queen mode.")
 
-(define-derived-mode borg-manager-mode tabulated-list-mode "BorgMngr"
-  "Major mode for the Borg Manager."
-  :group 'borg-manager
+(define-derived-mode borg-queen-mode tabulated-list-mode "BorgMngr"
+  "Major mode for the Borg Queen."
+  :group 'borg-queen
   (setq tabulated-list-format `[
                                 ("Package" ,(-max (mapcar 'length (borg-clones))) t)
                                 ("Type" 5 t)
@@ -144,30 +144,30 @@ Entries are of them form (DRONE PROPERTIES), where PROPERTIES is
                                 ]
         tabulated-list-sort-key (cons "Package" nil))
   (tabulated-list-init-header)
-  (use-local-map borg-manager-mode-map))
+  (use-local-map borg-queen-mode-map))
 
 ;;;###autoload
-(defun borg-manager ()
+(defun borg-queen ()
   "Manage and update Borg drones."
   (interactive)
-  (switch-to-buffer (get-buffer-create "*Borg Manager*"))
-  (borg-manager-mode)
-  (setq tabulated-list-entries (borg-manager--drones-states-list))
+  (switch-to-buffer (get-buffer-create "*Borg Queen*"))
+  (borg-queen-mode)
+  (setq tabulated-list-entries (borg-queen--drones-states-list))
   (tabulated-list-print)
   )
 
-(defun borg-manager-set-property (drone prop value)
+(defun borg-queen-set-property (drone prop value)
   "Assign DRONE the property PROP with value VALUE.
 
 For supported properties, see documentation for
-`borg-manager-drone-properties'"
+`borg-queen-drone-properties'"
 
-  (plist-put borg-manager-drones-properties drone
-             (plist-put (plist-get drone borg-manager-drones-properties) prop value)))
+  (plist-put borg-queen-drones-properties drone
+             (plist-put (plist-get drone borg-queen-drones-properties) prop value)))
 ;;
-(defun borg-manager-get-property (drone prop &optional no-default)
+(defun borg-queen-get-property (drone prop &optional no-default)
   "Return property PROP if it has been set for DRONE, or the value of the corresponding Customize variable."
-  (let ((properties (lax-plist-get borg-manager-drones-properties drone)))
+  (let ((properties (lax-plist-get borg-queen-drones-properties drone)))
 
     ;; :pgp-verify is a special case because it has a negative
     ;; override.  If :pgp-no-verify is t, we return nil without
@@ -182,27 +182,27 @@ For supported properties, see documentation for
          (cond
         ;; If we're still here, prop is nil so we have to fallback to
         ;; the Customize variable.
-          ((eq prop :pgp-verify) borg-manager-pgp-verify)
-          ((eq prop :upgrade-strategy) borg-manager-upgrade-strategy)))))))
+          ((eq prop :pgp-verify) borg-queen-pgp-verify)
+          ((eq prop :upgrade-strategy) borg-queen-upgrade-strategy)))))))
 
-(defun borg-manager--drones-states-list ()
+(defun borg-queen--drones-states-list ()
   "@TODO Write documentation"
   (mapcar (lambda (drone)
             `(,drone
-              ,(let ((props (borg-manager--drone-state drone)))
+              ,(let ((props (borg-queen--drone-state drone)))
                  `[
                    ;; Name
-                   ,(propertize drone 'face (if (borg-manager-get-property drone :required)
-                                                'borg-manager-package-name-required-face
-                                                'borg-manager-package-name-face))
+                   ,(propertize drone 'face (if (borg-queen-get-property drone :required)
+                                                'borg-queen-package-name-required-face
+                                                'borg-queen-package-name-face))
 
                    ;; Type
                    ,(if (plist-get props :assimilated)
-                        #("Drone" 0 5 (face borg-manager-type-drone-face))
-                      #("Clone" 0 5 (face borg-manager-type-clone-face)))
+                        #("Drone" 0 5 (face borg-queen-type-drone-face))
+                      #("Clone" 0 5 (face borg-queen-type-clone-face)))
 
                    ;; Update strategy (Upd)
-                   ,(--if-let (borg-manager-get-property drone :upgrade-strategy t)
+                   ,(--if-let (borg-queen-get-property drone :upgrade-strategy t)
                         (cond
                          ((equal it 'tag) "T")
                          ((equal it 'commit) "C")
@@ -216,7 +216,7 @@ For supported properties, see documentation for
 
                    ;; Available
                    ,(--if-let (plist-get props :latest-tag)
-                        (propertize it 'face (if (equal it (plist-get props :version-last-tag)) 'shadow 'borg-manager-upgradable-version-face))
+                        (propertize it 'face (if (equal it (plist-get props :version-last-tag)) 'shadow 'borg-queen-upgradable-version-face))
                       ""
                       )
                    ;; Operation
@@ -224,7 +224,7 @@ For supported properties, see documentation for
                    ])))
           (borg-clones)))
 
-(defun borg-manager--drone-state (drone)
+(defun borg-queen--drone-state (drone)
   "Return a plist describing the state of DRONE.
 
 Returned keys are:
@@ -272,6 +272,6 @@ Returned keys are:
      ,(when (member drone (borg-drones))
         '(:assimilated t))))))
 
-(provide 'borg-manager)
+(provide 'borg-queen)
 
-;;; borg-manager.el ends here
+;;; borg-queen.el ends here

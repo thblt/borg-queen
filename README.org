@@ -1,4 +1,6 @@
-#+TITLE: Manage and upgrade Borg drones
+#+TITLE: Borg Queen: Manage and upgrade Borg drones
+
+*This is pre-alpha software.  DO NOT USE.*
 
 Borg Queen is a package management frontend for [[https://github.com/emacscollective/borg][Borg]], providing a
 visual interface to manage and upgrade your drones, along with a few
@@ -29,20 +31,20 @@ These bindings are active in the Borg Queen interface, which is invoked with =M-
 
 | Binding | Action                                              |
 |---------+-----------------------------------------------------|
-| =u=       | Mark for upgrade                                    |
-| =U=       | Mark for auto upgrade or downgrade (see note below) |
-| =c=       | Mark for upgrade to most recent commit              |
-| =C=       | Prompt for commit, then mark for upgrade            |
-| =t=       | Mark for upgrade to latest tag                      |
-| =T=       | Prompt for  tag, then mark for upgrade              |
+| =u=       | Mark for *auto upgrade*                               |
+| =U=       | Mark for *auto upgrade or downgrade* (see note below) |
+| =c=       | Mark for upgrade to most recent *commit*              |
+| =C=       | *Prompt* for commit or tag, then mark for *upgrade*     |
+| =t=       | Mark for *upgrade to latest tag*                      |
+| =T=       | *Prompt for  tag*, then mark for *upgrade*              |
 | =A=       | Mark clone for assimilation                         |
 | =R=       | Mark for removal                                    |
 |---------+-----------------------------------------------------|
-| =x=       | Execute marks                                       |
-| =a=       | Assimilate new package as a submodule               |
-| =b=       | Clone new package                                   |
-| =!=       | Commit changes                                      |
+| =x=       | *Execute* marks                                       |
 |---------+-----------------------------------------------------|
-| =g=       | Refresh view                                        |
-
-=U= (mark for upgrade or downgrade) will mark for /downgrade/ iff the package is configured to be updated to tags only, it is not currently on a tag, and there are no tags after the current commit.  In this case, it will mark the package for downgrade to the most recent tag.
+| =a=       | *Assimilate* new package as a submodule               |
+| =b=       | *Clone* new package                                   |
+| =f=       | *Fork* a package.                                     |
+| =!=       | *Commit* changes to =.emacs.d=.                         |
+|---------+-----------------------------------------------------|
+| =g=       | *Refresh*                                             |

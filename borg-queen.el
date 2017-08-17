@@ -28,6 +28,7 @@
 (require 'borg)
 (require 'dash)
 (require 'magit)
+(require 'map)
 (require 'tabulated-list)
 
 (defgroup borg-queen nil
@@ -52,7 +53,7 @@
   )
 
 (defcustom borg-queen-upgrade-strategy
-  'commit
+  'commits
   "Determine whether to upgrade to tags or commits.
 
 If 'tag, packages will be auto upgraded to the tag describing the
@@ -93,14 +94,38 @@ Entries are of them form (DRONE PROPERTIES), where PROPERTIES is
   `:pgp-no-verify' -- t to locally override
   `borg-queen-pgp-always-verify'.  This has _HIGHER_ priority
   than `:pgp-verify'."
-  :group 'borg-queen
+  :group 'borg-queen)
+
+(defcustom borg-queen-marks-reprs
+  `((borg-queen--upgrade-action . ,(propertize " ▲ %s " 'face 'borg-queen-upgrade-mark-face))
+    (borg-queen--downgrade-action . ,(propertize " ▼ %s " 'face 'borg-queen-downgrade-mark-face))
+    (borg-queen--remove-action . ,(propertize " ❌ REMOVE "  'face 'borg-queen-remove-mark-face))
+    (borg-queen--assimilate-action . ,(propertize " ⦿ ASSIMILATE "  'face 'borg-queen-assimilate-mark-face)))
+  "@TODO")
+
+(defcustom borg-queen-state-ok-symbol
+  "✓"
+  "Symbol to use if this package has issues.")
+
+(defcustom borg-queen-state-warning-symbol
+  "?"
+  "Symbol to use if this package has issues.")
+
+(defface borg-queen-state-ok-face
+  '((t :foreground "LawnGreen"))
+  "State for the OK state symbol"
+  :group 'borg-queen-faces
   )
+
+(defface borg-queen-state-warning-face
+  '((t :foreground "orange"))
+  "State for the OK state symbol"
+  :group 'borg-queen-faces)
 
 (defface borg-queen-package-name-face
   '((t :inherit italic))
   "Face for package names"
-  :group 'borg-queen-faces
-  )
+  :group 'borg-queen-faces)
 
 (defface borg-queen-package-name-required-face
   '((t :inherit bold))
@@ -124,16 +149,31 @@ Entries are of them form (DRONE PROPERTIES), where PROPERTIES is
   "Face for the upgrade strategy."
   :group 'borg-queen-faces)
 
-(defface borg-queen-upgrade-strategy-error-face
-  '((t :background "red" :foreground "white"))
-  "Face for the upgrade strategy when the strategy is 'tag but the repository contains no tags."
-  :group 'borg-queen-faces)
-
 (defface borg-queen-upgradable-version-face
-  '((t :foreground "#0088cc" :background "#AAAAAA"))
+  '((t :foreground "#0088cc" :distant-foreground "#0088cc" :background "#AAAAAA"))
   "Face for Type column when type is Drone."
   :group 'borg-queen-faces
   )
+
+(defface borg-queen-upgrade-mark-face
+  '((t :foreground "black" :distant-foreground "#00CC00" :background "#00CC00" :weight bold))
+  "@TODO"
+  :group 'borg-queen-faces)
+
+(defface borg-queen-downgrade-mark-face
+  '((t :foreground "white" :foreground "#0000CC" :background "#0000CC" :weight bold))
+  "@TODO"
+  :group 'borg-queen-faces)
+
+(defface borg-queen-remove-mark-face
+  '((t :foreground "white" :distant-foreground "red" :background "red" :weight bold))
+  "@TODO"
+  :group 'borg-queen-faces)
+
+(defface borg-queen-assimilate-mark-face
+  '((t :foreground "black" :distant-foreground "white" :background "white" :weight bold))
+  "@TODO"
+  :group 'borg-queen-faces)
 
 (defvar borg-queen-mode-map
   (let ((map (make-sparse-keymap)))
@@ -144,8 +184,21 @@ Entries are of them form (DRONE PROPERTIES), where PROPERTIES is
     (define-key map (kbd "t") 'borg-queen-mark-for-auto-upgrade-to-tag)
     (define-key map (kbd "T") 'borg-queen-mark-for-upgrade-to-tag)
 
-    (define-key map (kbd "a") 'borg-queen-mark-for-assimilation)
-    (define-key map (kbd "a") 'borg-queen-mark-for-assimilation)
+    (define-key map (kbd "A") 'borg-queen-mark-for-assimilation)
+    (define-key map (kbd "R") 'borg-queen-mark-for-removal)
+
+    (define-key map (kbd "-") 'borg-queen-unmark)
+
+    (define-key map (kbd "x") 'borg-queen-run-marks)
+
+    (define-key map (kbd "a") 'borg-queen-assimilate)
+    (define-key map (kbd "b") 'borg-queen-clone)
+    (define-key map (kbd "f") 'borg-queen-fork)
+
+    (define-key map (kbd "f") 'borg-queen-commit)
+
+    (define-key map (kbd "g") 'borg-queen)
+    (define-key map (kbd "G") 'borg-queen-fetch-and-refresh)
     map)
   "Keymap for Borg Queen mode.")
 
@@ -155,21 +208,28 @@ Entries are of them form (DRONE PROPERTIES), where PROPERTIES is
 
 For a more formal documentation of this variable, see
 documentation for function `borg-queen--state'.")
+
+(defvar-local borg-queen--marks
+  nil
+  "An alist of (drone mark)")
 
 (define-derived-mode borg-queen-mode tabulated-list-mode "Borg Queen"
   "Major mode for the Borg Queen."
   :group 'borg-queen
   (setq tabulated-list-format `[
+                                ("S" 1 t)
                                 ("Package" ,(-max (mapcar 'length (borg-clones))) t)
+                                ("Mark" 16 t)
                                 ("Type" 5 t)
                                 ("Upd" 6 t)
                                 ("Installed" 20 t)
                                 ("Commits" 6 t)
-                                ("Available" 20 t)
-                                ("Operation" 99 t)
+                                ("Available" 99 t)
                                 ]
-        tabulated-list-sort-key (cons "Package" nil))
-  (tabulated-list-init-header))
+        tabulated-list-sort-key (cons "Package" nil)
+        tabulated-list-padding 1)
+  (tabulated-list-init-header)
+  (hl-line-mode))
 
 ;;;###autoload
 (defun borg-queen ()
@@ -179,54 +239,69 @@ documentation for function `borg-queen--state'.")
   (borg-queen-mode)
   (setq borg-queen--state (borg-queen--state))
   (setq tabulated-list-entries 'borg-queen--tabulated-list-entries)
-  (tabulated-list-print)
-  )
+  (tabulated-list-print t)
+  (message "Borg Queen is ready."))
 
 (defun borg-queen--tabulated-list-entries ()
   "Build the list of tabulated list entries."
   (mapcar (lambda (item)
             (let* ((name (car item))
-                  (state (cdr item))
-                  (props (cdr (assoc name borg-queen-drones-properties)))
-                  )
-            `(,name
-              [
-               ;; Name
-               ,(propertize name 'face (if (lax-plist-get props :required)
-                                           'borg-queen-package-name-required-face
-                                           'borg-queen-package-name-face))
+                   (state (cdr item))
+                   (props (cdr (assoc name borg-queen-drones-properties)))
+                   (mark (cdr (assoc name borg-queen--marks)))
+                   )
+              `(,name
+                [
+                 ;; Status symbol
+                 ,(if (plist-get state :warnings)
+                      (propertize borg-queen-state-warning-symbol 'face 'borg-queen-state-warning-face)
+                    (propertize borg-queen-state-ok-symbol 'face 'borg-queen-state-ok-face))
 
-               ;; Type
-               ,(if (lax-plist-get state :assimilated)
-                   (propertize "Drone" 'face 'borg-queen-type-drone-face)
-                  (propertize "Clone" 'face 'borg-queen-type-clone-face))
+                 ;; Name
+                   ,(propertize name 'face (if (lax-plist-get props :required)
+                                             'borg-queen-package-name-required-face
+                                            'borg-queen-package-name-face))
 
-               ;; Update strategy
-               ,(--if-let (lax-plist-get props :upgrade-strategy)
-                    (cond ((equal it :tags) (propertize "T" 'face (if (lax-plist-get state :latest-tag)
-                                                                      'default
-                                                                      'borg-queen-upgrade-strategy-error-face)))
-                         ((equal it :commits) "C")
-                         (t "λ"))
-                  "")
+                   ,(if mark
+                      (format
+                       (alist-get (car mark) borg-queen-marks-reprs)
+                       (cdr mark))
+                      "")
 
-               ;; Installed version
-               ,(lax-plist-get state :version)
+                 ;; Marks
 
-               ;; New commits
-               ,(let ((count (lax-plist-get state :new-commits)))
-                  (propertize (number-to-string count)
-                              'face (if (> count 0) 'default 'shadow)))
 
-               ;; Available
-               ,(-if-let* ((latest-tag (lax-plist-get state :latest-tag))
-                           (_ (not (equal latest-tag (lax-plist-get state :version-last-tag)))))
-                    latest-tag
-                  "")
 
-               ""
-              ]
-            )))
+                 ;; Type
+                 ,(if (plist-get state :assimilated)
+                      (propertize "Drone" 'face 'borg-queen-type-drone-face)
+                    (propertize "Clone" 'face 'borg-queen-type-clone-face))
+
+                 ;; Upgrade strategy
+                 ,(let ((strategy (borg-queen-get-upgrade-strategy name)))
+                    (propertize
+                     (cond ((equal strategy 'tags) "Tag")
+                           ((equal strategy 'commits) "Com")
+                           (t "λ"))
+                     'face (if (equal strategy borg-queen-upgrade-strategy)
+                               'shadow
+                             'default)))
+
+                 ;; Installed version
+                 ,(lax-plist-get state :version)
+
+                 ;; New commits
+                 ,(let ((count (lax-plist-get state :new-commits)))
+                    (propertize (number-to-string count)
+                                'face (if (> count 0) 'default 'shadow)))
+
+                 ;; Available
+                 ,(-if-let* ((latest-tag (lax-plist-get state :latest-tag))
+                             (_ (not (equal latest-tag (lax-plist-get state :version-last-tag)))))
+                      latest-tag
+                    "")
+                 ]
+                )))
           borg-queen--state))
 
 (defun borg-queen-set-property (drone prop value)
@@ -237,33 +312,16 @@ For supported properties, see documentation for
 
   (plist-put borg-queen-drones-properties drone
              (plist-put (plist-get drone borg-queen-drones-properties) prop value)))
-;;
-(defun borg-queen-get-property (drone prop &optional no-default)
-  "Return property PROP if it has been set for DRONE, or the value of the corresponding Customize variable."
-  (let ((properties (lax-plist-get borg-queen-drones-properties drone)))
 
-    ;; :pgp-verify is a special case because it has a negative
-    ;; override.  If :pgp-no-verify is t, we return nil without
-    ;; further checks.
-    (if (and (eq prop :pgp-verify)
-             (plist-get properties :pgp-no-verify))
-        nil
-                                        ; Default case
-      (or
-       (plist-get properties prop)
-       (unless no-default
-         (cond
-        ;; If we're still here, prop is nil so we have to fallback to
-        ;; the Customize variable.
-          ((eq prop :pgp-verify) borg-queen-pgp-verify)
-          ((eq prop :upgrade-strategy) borg-queen-upgrade-strategy)))))))
+(defun borg-queen-get-upgrade-strategy (drone)
+  "Return the upgrade strategy for drone."
+  (--if-let
+      (borg-queen--aplist-get drone :upgrade-strategy borg-queen-drones-properties)
+      it
+    borg-queen-upgrade-strategy))
 
-(defun borg-queen--state (&optional previous-state)
-  "Return the state of the Collective, merged with PREVIOUS-STATE.
-
-PREVIOUS-STATE must be a value previously returned by this
-function.  If provided, the value of user-provided
-keys (eg :mark) is copied from this state.
+(defun borg-queen--state ()
+  "Return the state of the Collective.
 
 The returned value is an alist of plist.  The keys of the alist
 are package names, as strings.  The keys of each plist are as
@@ -289,14 +347,14 @@ follows:
 
  `:new-commits': the number of new commits.
 
- `:latest-tag': the most recent tag.
-
- `:action': the action the user wants to perform on this drone.
- Set only if it is non-nil in PREVIOUS-STATE."
+ `:latest-tag': the most recent tag."
+  (message "Reading drones state...")
   (let ((borg-drones (borg-drones)))
     (mapcar (lambda (drone)
               (-flatten
-               (let ((default-directory (expand-file-name drone borg-drone-directory)))
+               (let* ((default-directory (expand-file-name drone borg-drone-directory))
+                      (drone-tags (magit-git-lines "tag"  "--sort" "creatordate"  "--merged" "origin/master")))
+                 ;; @FIXME Don't assume origin branch name.                                          ^^^^^^
                  `(,drone
                    ;; :path
                    (:path ,default-directory)
@@ -311,19 +369,93 @@ follows:
                        `(:version-type 2 :version ,(car it))))
 
                    ;; :latest-tag
-                    ,(--when-let (magit-git-lines "tag"  "--sort" "creatordate"  "--merged" "origin/master")
-                       ;; @FIXME Don't assume origin branch name.                                   ^^^^^^
-                       `(:latest-tag ,(-last-item it)))
+                   ,(when drone-tags
+                      `(:latest-tag ,(-last-item drone-tags)))
 
-                    ;; :assimilated
-                    ,(when (member drone borg-drones)
-                       '(:assimilated t))
+                   ;; :assimilated
+                   ,(when (member drone borg-drones)
+                      '(:assimilated t))
 
-                    ;; :new-commits
-                    (:new-commits ,(length (magit-git-lines "log" "--format=oneline" "HEAD..origin")))))))
+                   ;; :new-commits
+                   (:new-commits ,(length (magit-git-lines "log" "--format=oneline" "HEAD..origin")))
+
+                   ;; errors
+                   ,(when (and
+                           (equal 'tags (borg-queen-get-upgrade-strategy drone))
+                           (not drone-tags))
+                      `(:warnings "No tags in this repository, yet it is configured to update on tags only."))
+                   ))))
             (borg-clones))))
 
-(defun borg-queen--aplist-get (pkey akey aplist)
+(defmacro borg-queen--with-selection (&rest body)
+  "Execute BODY with each selected entry, binding PACKAGE to its name."
+  `(save-excursion
+     (if mark-active
+         nil
+       (let ((package (tabulated-list-get-id)))
+         (progn ,@body)))))
+
+(defun borg-queen--mark (drone &optional &rest mark)
+  "Add MARK to DRONE.
+
+DRONE is a drone or clone name as a string.
+
+MARK is nil, or a list whose car is a function name, and cdr its
+arguments except the drone name.
+
+If DRONE already has a mark, it is replaced."
+  (map-put borg-queen--marks drone mark)
+  (tabulated-list-print t))
+
+(defun borg-queen-mark-for-auto-upgrade ()
+  "@TODO"
+  (interactive))
+(defun borg-queen-mark-for-auto-upgrade-or-downgrade () "@TODO" (interactive))
+(defun borg-queen-mark-for-auto-upgrade-to-commit () "@TODO" (interactive))
+(defun borg-queen-mark-for-upgrade-to-commit () "@TODO" (interactive))
+(defun borg-queen-mark-for-auto-upgrade-to-tag () "@TODO" (interactive))
+(defun borg-queen-mark-for-upgrade-to-tag () "@TODO" (interactive))
+
+(defun borg-queen-mark-for-assimilation ()
+  "@TODO"
+  (interactive)
+  (borg-queen--with-selection
+   (if (borg-queen--aplist-get package :assimilated borg-queen--state)
+       (message "Already assimilated!")
+     (borg-queen--mark package 'borg-queen--assimilate-action))))
+
+(defun borg-queen-mark-for-removal () "@TODO" (interactive))
+
+(defun borg-queen-unmark ()
+  "@TODO"
+  (interactive)
+  (borg-queen--with-selection
+   (borg-queen--mark package)))
+
+(defun borg-queen-run-marks () "@TODO" (interactive))
+
+(defun borg-queen-assimilate () "@TODO" (interactive))
+(defun borg-queen-clone () "@TODO" (interactive))
+(defun borg-queen-fork () "@TODO" (interactive))
+(defun borg-queen-commit () "@TODO" (interactive))
+(defun borg-queen-fetch-and-refresh () "@TODO" (interactive))
+
+(defun borg-queen--upgrade-action (version drone)
+  "Set DRONE to VERSION."
+  )
+
+(defalias 'borg-queen--downgrade-action 'borg-queen-upgrade-action
+  "Alias defined for UI use, to distinguish between upgrade and downgrade marks.")
+
+(defun borg-queen--remove-action (drone)
+  "Remove DRONE."
+  )
+
+(defun borg-queen--assimilate-action (drone)
+  "Assimilate DRONE."
+  )
+
+(defun borg-queen--aplist-get (akey pkey aplist)
   "Return the value associated to PKEY in a plist associated to AKEY in APLIST."
   (lax-plist-get (cdr (assoc akey aplist)) pkey))
 

@@ -224,7 +224,8 @@ documentation for function `borg-queen--state'.")
                                 ("Upd" 6 t)
                                 ("Installed" 20 t)
                                 ("Commits" 6 t)
-                                ("Available" 99 t)
+                                ("Available" 20 t)
+                                ("Signature" 99 t)
                                 ]
         tabulated-list-sort-key (cons "Package" nil)
         tabulated-list-padding 1)
@@ -258,19 +259,16 @@ documentation for function `borg-queen--state'.")
                     (propertize borg-queen-state-ok-symbol 'face 'borg-queen-state-ok-face))
 
                  ;; Name
-                   ,(propertize name 'face (if (lax-plist-get props :required)
+                 ,(propertize name 'face (if (lax-plist-get props :required)
                                              'borg-queen-package-name-required-face
-                                            'borg-queen-package-name-face))
+                                           'borg-queen-package-name-face))
 
-                   ,(if mark
+                 ;; Mark
+                 ,(if mark
                       (format
                        (alist-get (car mark) borg-queen-marks-reprs)
                        (cdr mark))
-                      "")
-
-                 ;; Marks
-
-
+                    "")
 
                  ;; Type
                  ,(if (plist-get state :assimilated)
@@ -296,10 +294,16 @@ documentation for function `borg-queen--state'.")
                                 'face (if (> count 0) 'default 'shadow)))
 
                  ;; Available
-                 ,(-if-let* ((latest-tag (lax-plist-get state :latest-tag))
-                             (_ (not (equal latest-tag (lax-plist-get state :version-last-tag)))))
-                      latest-tag
+                 ,(-if-let* ((latest-tag (lax-plist-get state :latest-tag)))
+                      (if (not (equal latest-tag (lax-plist-get state :version-on-tag)))
+                          latest-tag
+                        "")
                     "")
+
+                 ;; Signature
+                 ,(--if-let (lax-plist-get state :signatures)
+                      (format "%s ()" (caar it))
+                    "None")
                  ]
                 )))
           borg-queen--state))
@@ -338,7 +342,7 @@ follows:
  it's a tag + a number of changes, 2 if it's a commit without a
  previous tag.
 
- `:version-last-tag': if `version-type' is 0, then this is equal to
+ `:version-on-tag': if `version-type' is 0, then this is equal to
  `version'.  If `version-type' is 1, it contains the name of the
  most recent tag this commit is based on.  Otherwise, its value
  is nil.
@@ -351,26 +355,37 @@ follows:
   (message "Reading drones state...")
   (let ((borg-drones (borg-drones)))
     (mapcar (lambda (drone)
-              (-flatten
+              (-flatten-n 1
                (let* ((default-directory (expand-file-name drone borg-drone-directory))
-                      (drone-tags (magit-git-lines "tag"  "--sort" "creatordate"  "--merged" "origin/master")))
+
+                      (tags (magit-git-lines "tag"  "--sort" "creatordate"  "--merged" "origin/master"))
+
+                      (version-tag (magit-git-lines "describe" "--tags" "--exact-match"))
+                      (version-tag-commits  (magit-git-lines "describe" "--tags"))
+                      (version-commit (magit-git-lines "describe" "--tags" "--always"))
+                      (version (car (or version-tag version-tag-commits version-commit)))
+                      (version-type (cond
+                                     (version-tag 0)
+                                     (version-tag-commits 1)
+                                     (version-commit 2)))
+                      (version-on-tag (car (magit-git-lines "describe" "--tags" "--abbrev=0"))))
+
                  ;; @FIXME Don't assume origin branch name.                                          ^^^^^^
                  `(,drone
                    ;; :path
                    (:path ,default-directory)
 
-                   ;; :version, :version-type, :version-last-tag
-                   ,(or
-                     (--when-let (magit-git-lines "describe" "--tags" "--exact-match")
-                       `(:version-type 0 :version ,(car it) :version-last-tag ,(car it)))
-                     (--when-let (magit-git-lines "describe" "--tags")
-                       `(:version-type 1 :version ,(car it) :version-last-tag ,(magit-git-lines "describe" "--tags" "--abbrev=0")))
-                     (--when-let (magit-git-lines "describe" "--tags" "--always")
-                       `(:version-type 2 :version ,(car it))))
+                   ;; :version
+                   (:version ,version)
+
+                   (:version-type ,version-type)
+
+                   ,(when version-on-tag
+                      `(:version-on-tag ,version-on-tag))
 
                    ;; :latest-tag
-                   ,(when drone-tags
-                      `(:latest-tag ,(-last-item drone-tags)))
+                   ,(when tags
+                      `(:latest-tag ,(-last-item tags)))
 
                    ;; :assimilated
                    ,(when (member drone borg-drones)
@@ -379,10 +394,19 @@ follows:
                    ;; :new-commits
                    (:new-commits ,(length (magit-git-lines "log" "--format=oneline" "HEAD..origin")))
 
+                   ;; numeric signature
+                   (:signatures ,(let ((command (if (equal 0 version)
+                                                   "git verify-tag --raw %s"
+                                                 "git verify-commit --raw HEAD")))
+                                  (borg-queen--parse-verify-output
+                                   (split-string
+                                    (shell-command-to-string "git verify-commit --raw HEAD") (rx "\n")))))
+
+
                    ;; errors
                    ,(when (and
                            (equal 'tags (borg-queen-get-upgrade-strategy drone))
-                           (not drone-tags))
+                           (not tags))
                       `(:warnings "No tags in this repository, yet it is configured to update on tags only."))
                    ))))
             (borg-clones))))
@@ -458,6 +482,31 @@ If DRONE already has a mark, it is replaced."
 (defun borg-queen--aplist-get (akey pkey aplist)
   "Return the value associated to PKEY in a plist associated to AKEY in APLIST."
   (lax-plist-get (cdr (assoc akey aplist)) pkey))
+
+(defun borg-queen--parse-verify-output (lines)
+  "Parse the output of git verify-[tag,commit] --raw ...
+
+Return a list of (KEYID OWNERID)"
+
+  ;; @FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME
+  ;; => Double check this regexp is actually valid.
+  ;; @FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME
+
+  (let ((str "[GNUPG:] GOODSIG 1B1336171A0B9064 Thibault Polge <thibault@thb.lt>"))
+    (-non-nil
+     (mapcar (lambda (str)
+               (when (string-match
+                      (rx
+                       line-start
+                       "[GNUPG:] GOODSIG "
+                       (group (one-or-more hex-digit))
+                       " "
+                       (group (one-or-more any))
+                       line-end)
+                      str)
+                 `(,(match-string 1  str)
+                   ,(match-string 2  str))))
+             lines))))
 
 (provide 'borg-queen)
 

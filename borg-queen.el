@@ -28,29 +28,26 @@
 (require 'borg)
 (require 'dash)
 (require 'magit)
-(require 'map)
 (require 'tabulated-list)
 
 (defgroup borg-queen nil
-  "Manage and update Borg drones."
-  )
+  "Manage and update Borg drones.")
 
 (defgroup borg-queen-faces nil
   "Faces for Borg Queen."
-  :group 'borg-queen
-  )
+  :group 'borg-queen)
 
 (defcustom borg-queen-pgp-verify
   nil
   "If t, no package will be updated without a valid PGP signature."
-  :group 'borg-queen
-  )
+  :group 'borg-queen)
 
-(defcustom borg-queen-pgp-require-key-list
+(defcustom borg-queen-pgp-global-keys
   nil
-  "If t, no package signature will be verified unless a list if valid keys is provided."
-  :group 'borg-queen
-  )
+  "A list of PGP keys IDs unconditionally accepted to sign all packages.
+
+This should be either nil or your own key."
+  :group 'borg-queen)
 
 (defcustom borg-queen-upgrade-strategy
   'commits
@@ -84,10 +81,9 @@ Entries are of them form (DRONE PROPERTIES), where PROPERTIES is
 
   `:pgp-verify' -- Either t to accept valid signatures from any
   key present in gpg keyring, or a key identifier or a list of
-  hex key identifiers, either long or short form, without any
-  suffix or prefix.
+  hex key identifiers in any form gpg will understand.
   Eg: (\"68CD0D65971CD850C96AA335D10A081695D25BA7\",
-  \"33CDE511\") (case doesn't matter)
+  \"33CDE511\")
 
   This property has _LOWER_ priority than `:pgp-no-verify'.
 
@@ -105,21 +101,38 @@ Entries are of them form (DRONE PROPERTIES), where PROPERTIES is
 
 (defcustom borg-queen-state-ok-symbol
   "✓"
-  "Symbol to use if this package has issues.")
+  "Symbol to use if this package has no issues.")
+
+(defcustom borg-queen-state-ok-but-no-pgp-symbol
+  " "
+  "Symbol to use if this package has no issues but has not enabled PGP signature verification.")
 
 (defcustom borg-queen-state-warning-symbol
   "?"
-  "Symbol to use if this package has issues.")
+  "Symbol to use if this package has minor issues.")
+
+(defcustom borg-queen-state-error-symbol
+  "!"
+  "Symbol to use if this package has severe issues.")
 
 (defface borg-queen-state-ok-face
   '((t :foreground "LawnGreen"))
   "State for the OK state symbol"
-  :group 'borg-queen-faces
-  )
+  :group 'borg-queen-faces)
+
+(defface borg-queen-state-ok-but-no-pgp-face
+  '((t :inherit shadow))
+  "State for the OK state symbol"
+  :group 'borg-queen-faces)
 
 (defface borg-queen-state-warning-face
   '((t :foreground "orange"))
-  "State for the OK state symbol"
+  "State for the warning state symbol"
+  :group 'borg-queen-faces)
+
+(defface borg-queen-state-error-face
+  '((t :background "red" :foreground  "white"))
+  "State for the error state symbol"
   :group 'borg-queen-faces)
 
 (defface borg-queen-package-name-face
@@ -149,11 +162,12 @@ Entries are of them form (DRONE PROPERTIES), where PROPERTIES is
   "Face for the upgrade strategy."
   :group 'borg-queen-faces)
 
-(defface borg-queen-upgradable-version-face
-  '((t :foreground "#0088cc" :distant-foreground "#0088cc" :background "#AAAAAA"))
+(defface borg-queen-available-tag-face
+  '((t :distant-foreground "MediumBlue" :foreground "DeepSkyBlue"))
   "Face for Type column when type is Drone."
-  :group 'borg-queen-faces
-  )
+  :group 'borg-queen-faces)
+
+;; Marks
 
 (defface borg-queen-upgrade-mark-face
   '((t :foreground "black" :distant-foreground "#00CC00" :background "#00CC00" :weight bold))
@@ -192,10 +206,13 @@ Entries are of them form (DRONE PROPERTIES), where PROPERTIES is
     (define-key map (kbd "x") 'borg-queen-run-marks)
 
     (define-key map (kbd "a") 'borg-queen-assimilate)
-    (define-key map (kbd "b") 'borg-queen-clone)
+    (define-key map (kbd "d") 'borg-queen-describe)
     (define-key map (kbd "f") 'borg-queen-fork)
 
     (define-key map (kbd "f") 'borg-queen-commit)
+
+    (define-key map (kbd "b") 'borg-queen-clone)
+    (define-key map (kbd "w") 'borg-queen-why)
 
     (define-key map (kbd "g") 'borg-queen)
     (define-key map (kbd "G") 'borg-queen-fetch-and-refresh)
@@ -216,17 +233,15 @@ documentation for function `borg-queen--state'.")
 (define-derived-mode borg-queen-mode tabulated-list-mode "Borg Queen"
   "Major mode for the Borg Queen."
   :group 'borg-queen
-  (setq tabulated-list-format `[
-                                ("S" 1 t)
-                                ("Package" ,(-max (mapcar 'length (borg-clones))) t)
-                                ("Mark" 16 t)
-                                ("Type" 5 t)
-                                ("Upd" 6 t)
-                                ("Installed" 20 t)
-                                ("Commits" 6 t)
-                                ("Available" 20 t)
-                                ("Signature" 99 t)
-                                ]
+  (setq tabulated-list-format `[ ("S" 1 t)
+                                 ("Package" ,(-max (mapcar 'length (borg-clones))) t)
+                                 ("Mark" 16 t)
+                                 ("Type" 5 t)
+                                 ("Upd" 6 t)
+                                 ("Installed" 20 t)
+                                 ("Commits" 7 t) ;; Commits
+                                 ("Available" 12 t)
+                                 ("Signature" 99 t) ]
         tabulated-list-sort-key (cons "Package" nil)
         tabulated-list-padding 1)
   (tabulated-list-init-header)
@@ -254,9 +269,14 @@ documentation for function `borg-queen--state'.")
               `(,name
                 [
                  ;; Status symbol
-                 ,(if (plist-get state :warnings)
-                      (propertize borg-queen-state-warning-symbol 'face 'borg-queen-state-warning-face)
-                    (propertize borg-queen-state-ok-symbol 'face 'borg-queen-state-ok-face))
+                 ,(cond ((plist-get state :errors)
+                         (propertize borg-queen-state-error-symbol 'face 'borg-queen-state-error-face))
+                        ((plist-get state :warnings)
+                         (propertize borg-queen-state-warning-symbol 'face 'borg-queen-state-warning-face))
+                        ((lax-plist-get state :signatures)
+                         (propertize borg-queen-state-ok-symbol 'face 'borg-queen-state-ok-face))
+                        (t
+                         (propertize borg-queen-state-ok-but-no-pgp-symbol 'face 'borg-queen-state-ok-but-no-pgp-face)))
 
                  ;; Name
                  ,(propertize name 'face (if (lax-plist-get props :required)
@@ -280,7 +300,7 @@ documentation for function `borg-queen--state'.")
                     (propertize
                      (cond ((equal strategy 'tags) "Tag")
                            ((equal strategy 'commits) "Com")
-                           (t "λ"))
+                           (t " λ "))
                      'face (if (equal strategy borg-queen-upgrade-strategy)
                                'shadow
                              'default)))
@@ -296,14 +316,14 @@ documentation for function `borg-queen--state'.")
                  ;; Available
                  ,(-if-let* ((latest-tag (lax-plist-get state :latest-tag)))
                       (if (not (equal latest-tag (lax-plist-get state :version-on-tag)))
-                          latest-tag
+                          (propertize latest-tag 'face 'borg-queen-available-tag-face)
                         "")
                     "")
 
                  ;; Signature
                  ,(--if-let (lax-plist-get state :signatures)
-                      (format "%s ()" (caar it))
-                    "None")
+                      (format "%s (%s)" (cadar it) (caar it))
+                    "")
                  ]
                 )))
           borg-queen--state))
@@ -352,14 +372,16 @@ follows:
  `:new-commits': the number of new commits.
 
  `:latest-tag': the most recent tag."
-  (message "Reading drones state...")
+  (message "Gathering drones state...")
   (let ((borg-drones (borg-drones)))
     (mapcar (lambda (drone)
-              (-flatten-n 1
+              (-flatten-n
+               1
                (let* ((default-directory (expand-file-name drone borg-drone-directory))
-
+                      ;; Tags
                       (tags (magit-git-lines "tag"  "--sort" "creatordate"  "--merged" "origin/master"))
-
+                      ;; @FIXME Don't assume origin branch name.                               ^^^^^^
+                      ;; Version
                       (version-tag (magit-git-lines "describe" "--tags" "--exact-match"))
                       (version-tag-commits  (magit-git-lines "describe" "--tags"))
                       (version-commit (magit-git-lines "describe" "--tags" "--always"))
@@ -368,9 +390,13 @@ follows:
                                      (version-tag 0)
                                      (version-tag-commits 1)
                                      (version-commit 2)))
-                      (version-on-tag (car (magit-git-lines "describe" "--tags" "--abbrev=0"))))
+                      (version-on-tag (car (magit-git-lines "describe" "--tags" "--abbrev=0")))
+                      ;; Signatures
+                      (signatures (or
+                                   (when (= version-type 0)
+                                     (borg-queen-git-verify drone "tag" version))
+                                   (borg-queen-git-verify drone))))
 
-                 ;; @FIXME Don't assume origin branch name.                                          ^^^^^^
                  `(,drone
                    ;; :path
                    (:path ,default-directory)
@@ -395,19 +421,18 @@ follows:
                    (:new-commits ,(length (magit-git-lines "log" "--format=oneline" "HEAD..origin")))
 
                    ;; numeric signature
-                   (:signatures ,(let ((command (if (equal 0 version)
-                                                   "git verify-tag --raw %s"
-                                                 "git verify-commit --raw HEAD")))
-                                  (borg-queen--parse-verify-output
-                                   (split-string
-                                    (shell-command-to-string "git verify-commit --raw HEAD") (rx "\n")))))
+                   (:signatures ,signatures)
 
-
-                   ;; errors
+                   ;; warnings
                    ,(when (and
                            (equal 'tags (borg-queen-get-upgrade-strategy drone))
                            (not tags))
                       `(:warnings "No tags in this repository, yet it is configured to update on tags only."))
+
+                   ;; errors
+                   ,(when (and (borg-queen-gpg-require-signature drone)
+                               (null signatures))
+                      `(:errors "Missing or invalid signature!"))
                    ))))
             (borg-clones))))
 
@@ -456,17 +481,35 @@ If DRONE already has a mark, it is replaced."
   (borg-queen--with-selection
    (borg-queen--mark package)))
 
-(defun borg-queen-run-marks () "@TODO" (interactive))
+(defun borg-queen-run-marks ()
+  "Execute marks."
+  (interactive)
+  (when (and borg-queen--marks
+             (y-or-n-p (format "Execute %s mark(s)?" (length borg-queen--marks))))
+    (dolist (mark borg-queen--marks)
+      (eval `(,(cadr mark)
+             ,(car mark)
+             ,(cddr mark))))))
 
 (defun borg-queen-assimilate () "@TODO" (interactive))
 (defun borg-queen-clone () "@TODO" (interactive))
+
+(defun borg-queen-describe ()
+  "Describe package at point."
+  (interactive)
+  (epkg-describe-package (tabulated-list-get-id)))
+
+(defun borg-queen-why ()
+  "Show a dependency path from package at point to a required package."
+  (interactive)
+  (message "Unimplemented")) ;; @TODO.
+
 (defun borg-queen-fork () "@TODO" (interactive))
 (defun borg-queen-commit () "@TODO" (interactive))
 (defun borg-queen-fetch-and-refresh () "@TODO" (interactive))
 
 (defun borg-queen--upgrade-action (version drone)
-  "Set DRONE to VERSION."
-  )
+  "Set DRONE to VERSION.")
 
 (defalias 'borg-queen--downgrade-action 'borg-queen-upgrade-action
   "Alias defined for UI use, to distinguish between upgrade and downgrade marks.")
@@ -477,36 +520,91 @@ If DRONE already has a mark, it is replaced."
 
 (defun borg-queen--assimilate-action (drone)
   "Assimilate DRONE."
+  (message (format "Assimilate!!! %s" drone))
   )
 
 (defun borg-queen--aplist-get (akey pkey aplist)
   "Return the value associated to PKEY in a plist associated to AKEY in APLIST."
   (lax-plist-get (cdr (assoc akey aplist)) pkey))
 
-(defun borg-queen--parse-verify-output (lines)
-  "Parse the output of git verify-[tag,commit] --raw ...
+(defun borg-queen-gpg-verify (drone &optional what object)
+  "PGP-verify DRONE with \"git verify-WHAT OBJECT\".
 
-Return a list of (KEYID OWNERID)"
+WHAT can be nil, \"commit\" or \"tag\".  If nil, WHAT defaults to
+commit.  If WHAT is \"tag\", OBJECT must be provided."
+  (unless what
+    (setq what "commit"))
+  (unless object
+    (if (equal "commit" what)
+        (setq object "HEAD")
+      (error "Can't guess a tag name")))
 
-  ;; @FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME
-  ;; => Double check this regexp is actually valid.
-  ;; @FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME FIXME
+  (let* ((default-directory (expand-file-name drone borg-drone-directory))
+         (signatures (borg-queen--gpg-parse-verify-output
+                      (split-string
+                       (shell-command-to-string (format "git verify-%s --raw %s" what (shell-quote-argument object)))
+                       (rx "\n")))))
+    ;; @FIXME Match signatures against list of valid signatures for DRONE.
 
-  (let ((str "[GNUPG:] GOODSIG 1B1336171A0B9064 Thibault Polge <thibault@thb.lt>"))
-    (-non-nil
-     (mapcar (lambda (str)
-               (when (string-match
-                      (rx
-                       line-start
-                       "[GNUPG:] GOODSIG "
-                       (group (one-or-more hex-digit))
-                       " "
-                       (group (one-or-more any))
-                       line-end)
-                      str)
-                 `(,(match-string 1  str)
-                   ,(match-string 2  str))))
-             lines))))
+    (when (borg-queen--gpg-match-keys
+           (mapcar 'car signatures)
+           (append (borg-get-all drone "signingkey") borg-queen-pgp-global-keys))
+      signatures)))
+
+(defun borg-queen-gpg-require-signature (drone)
+  "Return t if DRONE is configured to require a valid signature."
+  (or
+   borg-queen-pgp-verify
+   (borg-get-all drone "signingkey")))
+
+(defun borg-queen--gpg-parse-verify-output (lines)
+  "Parse LINES as output of git verify-[tag,commit] --raw ...
+
+Returns nil or a list of (KEYID OWNERID)."
+  (-non-nil
+   (mapcar (lambda (str)
+             ;; The regexp below is based on the actual output of the program and documentation here:
+             ;; https://www.gnupg.org/documentation/manuals/gnupg/Automated-signature-checking.html
+             (when (string-match (rx
+                                  line-start
+                                  "[GNUPG:] GOODSIG "
+                                  (group (one-or-more hex-digit))
+                                  " "
+                                  (group (one-or-more any))
+                                  line-end)
+                                 str)
+               `(,(match-string 1 str)
+                 ,(match-string 2 str))))
+           lines)))
+
+(defun borg-queen--gpg-collect-fingerprints (keys)
+  "Run gpg --list-keys --with-colons KEYS, and return a list of fingerprints.
+
+KEYS is a list of string."
+  (let ((fprs nil))
+    (with-temp-buffer
+      (apply #'call-process epg-gpg-program nil t nil
+             "--list-keys" "--with-colons" "--" keys)
+      (goto-char (point-min))
+      (while (re-search-forward "^pub" nil t)
+        (when (re-search-forward "^fpr" nil t)
+          (push (nth 9 (split-string (buffer-substring-no-properties
+                                      (line-beginning-position)
+                                      (line-end-position))
+                                     ":"))
+                fprs)))
+      fprs)))
+
+(defun borg-queen--gpg-match-keys (keys other-keys)
+  "Return non-nil iff KEYS and OTHER-KEYS intersect.
+
+KEYS and OTHER-KEYS are list of strings, which should be valid
+GnuPG key identifiers.  The return value is the
+intersection (list of key fingerprint strings) of the keys or
+nil"
+  (cl-intersection (borg-queen--gpg-collect-fingerprints keys)
+                   (borg-queen--gpg-collect-fingerprints other-keys)
+                   :test #'equalp))
 
 (provide 'borg-queen)
 

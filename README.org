@@ -6,9 +6,18 @@ Borg Queen is a package management frontend for [[https://github.com/emacscollec
 visual interface to manage and upgrade your drones, along with a few
 utility functions.
 
-It features:
+Borg is a minimal Emacs package manager which stores packages as Git
+submodules.  Unlike the standard =package.el=, Borg makes it trivial to
+contribute back changes to packages, since everything is already a git
+repository.  No more need to clone repositories and update =load-path=
+to start working on a package: everything's already there.  Also, Borg
+makes your configuration perfectly reproducible, since Git submodules
+always point to a specific commit.
 
- - A unified package management interface for Borg clones and drones.
+On top of Borg, Borg-Queen provides:
+
+ - A *unified package management UI* for both clones and drones (simple
+   clones or submodules).
 
  - *Manually managed upgrades*.  Borg Queen leaves you in full
    control of what, when and how you upgrade.  You may pull everything
@@ -16,7 +25,7 @@ It features:
    specific drone, or maybe pull a drone to the latest commit while
    downgrading another to an older tag.
 
- - *Stable or unstable mode*.  Borg Queen allows to upgrade only to
+ - *Stable or unstable mode*.  Borg Queen allows to auto-upgrade only to
    new tags or to each new commit.
 
  - *PGP signatures*.  Borg Queen allows to define (globally or for
@@ -24,6 +33,17 @@ It features:
    building an updated drone.  It has an extra paranoia mode where it
    won't upgrade a drone unless it has a list of valid keys for it,
    and of course the signature can be verified.
+
+* Using Borg Queen
+
+Try =borg-queen= by running:
+
+#+BEGIN_EXAMPLE
+M-x borg-clone RET borg-queen RET
+M-x borg-queen
+#+END_EXAMPLE
+
+You'll be shown Borg Queen's UI.
 
 * Standard bindings
 

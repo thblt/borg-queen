@@ -136,21 +136,19 @@ Entries are of them form (DRONE PROPERTIES), where PROPERTIES is
   :group 'borg-queen-faces)
 
 (defface borg-queen-package-name-face
-  '((t :inherit italic))
+  '((t :inherit font-lock-comment-face))
   "Face for package names"
   :group 'borg-queen-faces)
 
 (defface borg-queen-package-name-required-face
-  '((t :inherit bold))
+  '((t :inherit font-lock-keyword-face))
   "Face for required package names"
-  :group 'borg-queen-faces
-  )
+  :group 'borg-queen-faces)
 
 (defface borg-queen-type-clone-face
   '((t :inherit bold))
   "Face for Type column when type is Clone."
-  :group 'borg-queen-faces
-  )
+  :group 'borg-queen-faces)
 
 (defface borg-queen-type-drone-face
   '((t :inherit shadow))
@@ -444,7 +442,7 @@ follows:
        (let ((package (tabulated-list-get-id)))
          (progn ,@body)))))
 
-(defun borg-queen--mark (drone &optional &rest mark)
+(defun borg-queen--mark (drone &rest mark)
   "Add MARK to DRONE.
 
 DRONE is a drone or clone name as a string.
@@ -453,7 +451,9 @@ MARK is nil, or a list whose car is a function name, and cdr its
 arguments except the drone name.
 
 If DRONE already has a mark, it is replaced."
-  (map-put borg-queen--marks drone mark)
+  (if mark
+    (map-put borg-queen--marks drone mark)
+    (map-delete borg-queen--marks drone))
   (tabulated-list-print t))
 
 (defun borg-queen-mark-for-auto-upgrade ()
@@ -473,7 +473,12 @@ If DRONE already has a mark, it is replaced."
        (message "Already assimilated!")
      (borg-queen--mark package 'borg-queen--assimilate-action))))
 
-(defun borg-queen-mark-for-removal () "@TODO" (interactive))
+(defun borg-queen-mark-for-removal ()
+  "Mark DRONE for removal."
+  (interactive)
+  (borg-queen--with-selection
+   (when (y-or-n-p (format "Mark %s for removal?" package))
+     (borg-queen--mark package 'borg-queen--remove-action))))
 
 (defun borg-queen-unmark ()
   "@TODO"

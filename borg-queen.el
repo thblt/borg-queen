@@ -92,11 +92,15 @@ Entries are of them form (DRONE PROPERTIES), where PROPERTIES is
   than `:pgp-verify'."
   :group 'borg-queen)
 
+(defcustom borg-queen-mark-delimiter
+  " ▸ "
+  "@TODO")
+
 (defcustom borg-queen-marks-reprs
-  `((borg-queen--upgrade-action . ,(propertize " ▲ %s " 'face 'borg-queen-upgrade-mark-face))
-    (borg-queen--downgrade-action . ,(propertize " ▼ %s " 'face 'borg-queen-downgrade-mark-face))
-    (borg-queen--remove-action . ,(propertize " ❌ REMOVE "  'face 'borg-queen-remove-mark-face))
-    (borg-queen--assimilate-action . ,(propertize " ⦿ ASSIMILATE "  'face 'borg-queen-assimilate-mark-face)))
+  `((borg-queen--upgrade-action . ,(propertize "Upgrade to %s" 'face 'borg-queen-upgrade-mark-face))
+    (borg-queen--downgrade-action . ,(propertize "Downgrade to %s" 'face 'borg-queen-downgrade-mark-face))
+    (borg-queen--remove-action . ,(propertize "REMOVE"  'face 'borg-queen-remove-mark-face))
+    (borg-queen--assimilate-action . ,(propertize "Assimilate"  'face 'borg-queen-assimilate-mark-face)))
   "@TODO")
 
 (defcustom borg-queen-state-ok-symbol
@@ -131,7 +135,7 @@ Entries are of them form (DRONE PROPERTIES), where PROPERTIES is
   :group 'borg-queen-faces)
 
 (defface borg-queen-state-error-face
-  '((t :background "red" :foreground  "white"))
+  '((t :background "red" :foreground "white"))
   "State for the error state symbol"
   :group 'borg-queen-faces)
 
@@ -167,23 +171,28 @@ Entries are of them form (DRONE PROPERTIES), where PROPERTIES is
 
 ;; Marks
 
+(defface borg-queen-mark-delimiter-face
+  '((t :inherit 'bold))
+  "@TODO"
+  :group 'borg-queen-faces)
+
 (defface borg-queen-upgrade-mark-face
-  '((t :foreground "black" :distant-foreground "#00CC00" :background "#00CC00" :weight bold))
+  '((t :distant-foreground "MediumBlue" :foreground "DeepSkyBlue" :underline t))
   "@TODO"
   :group 'borg-queen-faces)
 
 (defface borg-queen-downgrade-mark-face
-  '((t :foreground "white" :foreground "#0000CC" :background "#0000CC" :weight bold))
+  '((t :distant-foreground "white" :foreground "#orange" :underline t))
   "@TODO"
   :group 'borg-queen-faces)
 
 (defface borg-queen-remove-mark-face
-  '((t :foreground "white" :distant-foreground "red" :background "red" :weight bold))
+  '((t :distant-foreground "orange" :foreground "red" :underline t))
   "@TODO"
   :group 'borg-queen-faces)
 
 (defface borg-queen-assimilate-mark-face
-  '((t :foreground "black" :distant-foreground "white" :background "white" :weight bold))
+  '((t :distant-foreground "black" :foreground "white" :underline t))
   "@TODO"
   :group 'borg-queen-faces)
 
@@ -232,12 +241,12 @@ documentation for function `borg-queen--state'.")
   "Major mode for the Borg Queen."
   :group 'borg-queen
   (setq tabulated-list-format `[ ("S" 1 t)
-                                 ("Package" ,(-max (mapcar 'length (borg-clones))) t)
-                                 ("Mark" 16 t)
+                                 ("Package" ,(+ 20 (-max (mapcar 'length (borg-clones)))) t)
+                                 ;; ("Mark" 16 t)
                                  ("Type" 5 t)
                                  ("Upd" 6 t)
                                  ("Installed" 20 t)
-                                 ("Commits" 7 t) ;; Commits
+                                 ("Commits" 7 nil . (:right-align t))
                                  ("Available" 12 t)
                                  ("Signature" 99 t) ]
         tabulated-list-sort-key (cons "Package" nil)
@@ -277,16 +286,26 @@ documentation for function `borg-queen--state'.")
                          (propertize borg-queen-state-ok-but-no-pgp-symbol 'face 'borg-queen-state-ok-but-no-pgp-face)))
 
                  ;; Name
-                 ,(propertize name 'face (if (lax-plist-get props :required)
+                 ,(concat
+                   (propertize name 'face (if (lax-plist-get props :required)
                                              'borg-queen-package-name-required-face
-                                           'borg-queen-package-name-face))
+                                            'borg-queen-package-name-face))
+                   (if mark
+                       (concat
+                        (propertize borg-queen-mark-delimiter 'face 'borg-queen-mark-delimiter-face)
+                       (format
+                        (alist-get (car mark) borg-queen-marks-reprs)
+                        (cadr mark)))
+                    " "))
+
 
                  ;; Mark
-                 ,(if mark
-                      (format
-                       (alist-get (car mark) borg-queen-marks-reprs)
-                       (cdr mark))
-                    "")
+                 ;; ,(if mark
+                 ;;      (format
+                 ;;       (alist-get (car mark) borg-queen-marks-reprs)
+                 ;;       (cdr mark))
+                 ;;    " ")
+;;                 ""
 
                  ;; Type
                  ,(if (plist-get state :assimilated)
@@ -337,8 +356,7 @@ For supported properties, see documentation for
 
 (defun borg-queen-get-upgrade-strategy (drone)
   "Return the upgrade strategy for drone."
-  (--if-let
-      (borg-queen--aplist-get drone :upgrade-strategy borg-queen-drones-properties)
+  (--if-let (borg-queen--aplist-get drone :upgrade-strategy borg-queen-drones-properties)
       it
     borg-queen-upgrade-strategy))
 
@@ -392,8 +410,8 @@ follows:
                       ;; Signatures
                       (signatures (or
                                    (when (= version-type 0)
-                                     (borg-queen-git-verify drone "tag" version))
-                                   (borg-queen-git-verify drone))))
+                                     (borg-queen-gpg-verify drone "tag" version))
+                                   (borg-queen-gpg-verify drone))))
 
                  `(,drone
                    ;; :path
@@ -419,7 +437,8 @@ follows:
                    (:new-commits ,(length (magit-git-lines "log" "--format=oneline" "HEAD..origin")))
 
                    ;; numeric signature
-                   (:signatures ,signatures)
+                   ,(when signatures
+                     `(:signatures ,signatures))
 
                    ;; warnings
                    ,(when (and
@@ -454,11 +473,18 @@ If DRONE already has a mark, it is replaced."
   (if mark
     (map-put borg-queen--marks drone mark)
     (map-delete borg-queen--marks drone))
-  (tabulated-list-print t))
+  (tabulated-list-revert t))
 
 (defun borg-queen-mark-for-auto-upgrade ()
   "@TODO"
-  (interactive))
+  (interactive)
+  (borg-queen--with-selection
+   (let ((strategy (borg-queen-get-upgrade-strategy package)))
+     (cond ((equal strategy 'tags)
+            (borg-queen-mark-for-auto-upgrade-to-tag))
+           ((equal strategy 'commit)
+            (borg-queen-mark-for-auto-upgrade-to-commit))))))
+
 (defun borg-queen-mark-for-auto-upgrade-or-downgrade () "@TODO" (interactive))
 (defun borg-queen-mark-for-auto-upgrade-to-commit () "@TODO" (interactive))
 (defun borg-queen-mark-for-upgrade-to-commit () "@TODO" (interactive))
@@ -492,9 +518,9 @@ If DRONE already has a mark, it is replaced."
   (when (and borg-queen--marks
              (y-or-n-p (format "Execute %s mark(s)?" (length borg-queen--marks))))
     (dolist (mark borg-queen--marks)
-      (eval `(,(cadr mark)
-             ,(car mark)
-             ,(cddr mark))))))
+      (eval (-flatten `(,(cadr mark)
+                         ,(car mark)
+                         ,(cddr mark)))))))
 
 (defun borg-queen-assimilate () "@TODO" (interactive))
 (defun borg-queen-clone () "@TODO" (interactive))
@@ -513,8 +539,9 @@ If DRONE already has a mark, it is replaced."
 (defun borg-queen-commit () "@TODO" (interactive))
 (defun borg-queen-fetch-and-refresh () "@TODO" (interactive))
 
-(defun borg-queen--upgrade-action (version drone)
-  "Set DRONE to VERSION.")
+(defun borg-queen--upgrade-action (drone version)
+  "Set DRONE to VERSION."
+  (message "Upgrade %s to %s" drone version))
 
 (defalias 'borg-queen--downgrade-action 'borg-queen-upgrade-action
   "Alias defined for UI use, to distinguish between upgrade and downgrade marks.")
@@ -568,7 +595,9 @@ commit.  If WHAT is \"tag\", OBJECT must be provided."
 Returns nil or a list of (KEYID OWNERID)."
   (-non-nil
    (mapcar (lambda (str)
-             ;; The regexp below is based on the actual output of the program and documentation here:
+             ;; @FIXME Verify.
+             ;; The regexp below is based on the actual output of the
+             ;; program and on documentation found here:
              ;; https://www.gnupg.org/documentation/manuals/gnupg/Automated-signature-checking.html
              (when (string-match (rx
                                   line-start

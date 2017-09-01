@@ -45,6 +45,15 @@ M-x borg-queen
 
 You'll be shown Borg Queen's UI.
 
+** Using PGP signatures
+
+Git allows for commits of tags to be digitally signed using GnuPG.  By default, Borg Queen verifies such signatures when one is present, and dispays the signed ID in the main screen, and verification details on a popup.
+
+It is better to tell Borg Queen which PGP keys are actually valid for signing packages:
+
+ - To configure a list of valid PGP keys for a given package, set the =submodules.DRONE.signingkey= entry in =.gitmodules=.  This entry can be repeated if needed.
+
+ - To configure
 * Standard bindings
 
 These bindings are active in the Borg Queen interface, which is invoked with =M-x borg-queen RET=.

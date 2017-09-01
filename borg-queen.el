@@ -160,7 +160,7 @@ This property can be overriden for specific drones with `borg-queen-drone-upgrad
   :group 'borg-queen-faces)
 
 (defface borg-queen-checkout-mark-face
-  '((t :distant-foreground "MediumBlue" :foreground "DeepSkyBlue" :inverse-video t))
+  '((t :distant-foreground "black" :foreground "green" :inverse-video t))
   "@TODO"
   :group 'borg-queen-faces)
 
@@ -170,16 +170,16 @@ This property can be overriden for specific drones with `borg-queen-drone-upgrad
   :group 'borg-queen-faces)
 
 (defface borg-queen-assimilate-mark-face
-  '((t :distant-foreground "black" :foreground "white" :inverse-video t))
+  '((t :distant-foreground "MediumBlue" :foreground "DeepSkyBlue" :inverse-video t))
   "@TODO"
   :group 'borg-queen-faces)
 
 (defvar borg-queen-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "u") 'borg-queen-mark-for-checkout-auto)
-    (define-key map (kbd "c") 'borg-queen-mark-for-checkout-latest-commit)
-    (define-key map (kbd "C") 'borg-queen-mark-for-checkout-any-commit)
-    (define-key map (kbd "t") 'borg-queen-mark-for-checkout-latest-tag)
+    (define-key map (kbd "H") 'borg-queen-mark-for-checkout-head)
+    (define-key map (kbd "c") 'borg-queen-mark-for-checkout-commit)
+    (define-key map (kbd "t") 'borg-queen-mark-for-checkout-tag)
     (define-key map (kbd "T") 'borg-queen-mark-for-checkout-any-tag)
 
     (define-key map (kbd "A") 'borg-queen-mark-for-assimilation)
@@ -279,15 +279,6 @@ documentation for function `borg-queen--state'.")
                          (cadr mark)))
                      " "))
 
-
-                 ;; Mark
-                 ;; ,(if mark
-                 ;;      (format
-                 ;;       (alist-get (car mark) borg-queen-marks-reprs)
-                 ;;       (cdr mark))
-                 ;;    " ")
-                 ;;                 ""
-
                  ;; Type
                  ,(if (plist-get state :assimilated)
                       (propertize "Drone" 'face 'borg-queen-type-drone-face)
@@ -296,9 +287,9 @@ documentation for function `borg-queen--state'.")
                  ;; Upgrade strategy
                  ,(let ((strategy (borg-queen-get-upgrade-strategy name)))
                     (propertize
-                     (cond ((equal strategy 'tags) "Tag")
-                           ((equal strategy 'commits) "Com")
-                           (t " λ "))
+                     (cond ((equal strategy 'tag) "Tag")
+                           ((equal strategy 'head) "Hea")
+                           ((equal strategy 'auto) "Aut"))
                      'face (if (equal strategy borg-queen-upgrade-strategy)
                                'shadow
                              'default)))
@@ -340,8 +331,6 @@ follows:
 
  `:name': drone name as a string.
 
- `:path': path to the git submodule.
-
  `:version': either the output of `git describe' or the short hash
  of the current commit (if `version-type' == 2).
 
@@ -358,6 +347,8 @@ follows:
 
  `:new-commits': the number of new commits.
 
+ `:tags': the list of tags.
+
  `:latest-tag': the most recent tag."
   (message "Gathering drones state...")
   (let ((borg-drones (borg-drones)))
@@ -368,25 +359,27 @@ follows:
                       ;; Tags
                       (tags (magit-git-lines "tag"  "--sort" "creatordate"  "--merged" "origin/master"))
                       ;; @FIXME Don't assume origin branch name.                               ^^^^^^
+
                       ;; Version
                       (version-tag (magit-git-lines "describe" "--tags" "--exact-match"))
                       (version-tag-commits  (magit-git-lines "describe" "--tags"))
                       (version-commit (magit-git-lines "describe" "--tags" "--always"))
                       (version (car (or version-tag version-tag-commits version-commit)))
+
                       (version-type (cond
                                      (version-tag 0)
                                      (version-tag-commits 1)
                                      (version-commit 2)))
+
                       (version-on-tag (car (magit-git-lines "describe" "--tags" "--abbrev=0")))
+
                       ;; Signatures
                       (signatures (or
                                    (when (= version-type 0)
-                                     (borg-queen-gpg-verify drone "tag" version))
+                                     (borg-queen-gpg-verify drone))
                                    (borg-queen-gpg-verify drone))))
 
                  `(,drone
-                   ;; :path
-                   (:path ,default-directory)
 
                    ;; :version
                    (:version ,version)
@@ -407,6 +400,9 @@ follows:
                    ;; :new-commits
                    (:new-commits ,(length (magit-git-lines "log" "--format=oneline" "HEAD..origin")))
 
+                   ;; tags
+                   (:tags ,tags)
+
                    ;; numeric signature
                    ,(when signatures
                       `(:signatures ,signatures))
@@ -426,10 +422,10 @@ follows:
 
 (defmacro borg-queen--with-selection (&rest body)
   "Execute BODY with each selected entry, binding DRONE to its name."
-  `(dolist (drone (quote ,(if mark-active
-                              nil ;; @TODO Build list of selected items
-                            `(,(tabulated-list-get-id)))))
-     ,@body))
+  `(mapc (lambda (drone) ,@body)
+         (if mark-active
+             nil ;; @TODO Build list of selected items
+           (list (tabulated-list-get-id)))))
 
 (defun borg-queen--mark (drone &rest mark)
   "Add MARK to DRONE.
@@ -449,24 +445,71 @@ If DRONE already has a mark, it is replaced."
   "@TODO"
   (interactive)
   (borg-queen--with-selection
-   (let ((strategy (borg-queen-get-checkout-strategy package)))
-     (cond ((equal strategy 'tags)
+   (let ((strategy (borg-queen-get-upgrade-strategy drone)))
+     (cond ((equal strategy 'tag)
             (borg-queen-mark-for-checkout-latest-tag))
+
            ((equal strategy 'head)
-            (borg-queen-mark-for-checkout-latest-commit))))))
+            (borg-queen-mark-for-checkout-head))
+
+           ((equal strategy 'auto)
+            (if (borg-queen--aplist-get drone :tags borg-queen--state)
+                (borg-queen-mark-for-checkout-latest-tag)
+              (borg-queen-mark-for-checkout-head)))
+
+           (t (error (format "Unknow strategy %s" strategy)))))))
 
 (defun borg-queen-mark-for-checkout-latest-tag ()
   "Mark selection to checkout the most recent tag."
-  (borg-queen--with-selection)
-  )
+  (interactive)
+  (borg-queen--with-selection
+   (borg-queen--mark-for-checkout
+    drone
+    (borg-queen--aplist-get drone :latest-tag borg-queen--state)
+    t)))
+
+   (defun borg-queen-mark-for-checkout-head ()
+  "Mark for checkout origin/HEAD"
+  (interactive)
+  (borg-queen--with-selection
+   (borg-queen--mark-for-checkout drone "origin/HEAD" nil)))
+
+(defun borg-queen-mark-for-checkout-commit ()
+  "Prompt for commit then mark it for checkout."
+  (interactive)
+  (borg-queen--with-selection
+   (let* ((default-directory (expand-file-name drone borg-drone-directory))
+          (commit (completing-read
+                   (format "Checkout %s to commit: " drone)
+                   (magit-git-lines "log" "--format=%h %s" "origin/HEAD")))))))
+
+(defun borg-queen--mark-for-checkout (drone object is-tag)
+  "Mark DRONE to checkout to OBJECT.
+
+If IS-TAG, OBJECT is a tag name, otherwise a commit hash.
+
+This functions runs a cryptographic verification on the target
+object and checks it returns a valid key before going on.  If the
+current commit (HEAD) has a valid signature and the target OBJECT
+hasn't, it warns the user before marking with `yes-or-no-p'."
+  (when (or
+         (borg-queen-gpg-verify drone object is-tag)
+         (not (borg-queen--aplist-get drone :signatures borg-queen--state))
+         (yes-or-no-p
+          (format "Missing or invalid signature for %s %s on drone %s.  Mark anyway?"
+                  (if is-tag "tag" "commit")
+                  object
+                  drone)))
+    (borg-queen--mark drone 'borg-queen--checkout-action object is-tag)))
+
 
 (defun borg-queen-mark-for-assimilation ()
   "@TODO"
   (interactive)
   (borg-queen--with-selection
-   (if (borg-queen--aplist-get package :assimilated borg-queen--state)
+   (if (borg-queen--aplist-get drone :assimilated borg-queen--state)
        (message "Already assimilated!")
-     (borg-queen--mark package 'borg-queen--assimilate-action))))
+     (borg-queen--mark drone 'borg-queen--assimilate-action))))
 
 (defun borg-queen-mark-for-removal ()
   "Mark DRONE for removal."
@@ -479,7 +522,7 @@ If DRONE already has a mark, it is replaced."
   "@TODO"
   (interactive)
   (borg-queen--with-selection
-   (borg-queen--mark package)))
+   (borg-queen--mark drone)))
 
 (defun borg-queen-run-marks ()
   "Execute marks."
@@ -521,7 +564,7 @@ If DRONE already has a mark, it is replaced."
             (princ (format "\n\tError: %s" e)))
           (dolist (w warnings)
             (princ (format "\n\tWarning: %s " w))))
-      (message (format "No issues for %s." drone)))))
+      (message "No issues for %s." drone))))
 
 
 (defun borg-queen-commit () "@TODO" (interactive))
@@ -545,24 +588,42 @@ OBJECT is understood as a TAG name."
   "Return the value associated to PKEY in a plist associated to AKEY in APLIST."
   (lax-plist-get (cdr (assoc akey aplist)) pkey))
 
-(defun borg-queen-gpg-verify (drone &optional what object)
-  "PGP-verify DRONE with \"git verify-WHAT OBJECT\".
+(defun borg-queen-gpg-verify (drone &optional object is-tag)
+  "PGP-verify DRONE commit or tag OBJECT.
 
-WHAT can be nil, \"commit\" or \"tag\".  If nil, WHAT defaults to
-commit.  If WHAT is \"tag\", OBJECT must be provided."
-  (unless what
-    (setq what "commit"))
+if IS-TAG is non-nil, OBJECT is treated as a commit hash,
+otherwise as a tag name.
+
+If object is not provided, it defaults to \"HEAD\"."
+
   (unless object
-    (if (equal "commit" what)
-        (setq object "HEAD")
-      (error "Can't guess a tag name")))
+    (setq object "HEAD"))
+
+  ;; @FIXME: Add fallback.  If IS-TAG, find the commit this tag points
+  ;; to, and verify the commit if the tag isn't signed.  Other, find
+  ;; tags pointing to OBJECT and verify them if commit isn't signed.
 
   (let* ((default-directory (expand-file-name drone borg-drone-directory))
+         (commands (cons
+                    ;; First chance: verify the provided object.
+                    (format "git verify-%s --raw %s"
+                          (if is-tag "tag" "commit")
+                          (shell-quote-argument object))
+
+                    ;; Second chance: verify tag if commit, commit if tag
+                    (if is-tag
+                        ;; Verify the commit this tag points to.
+                        (list (format "git verify-commit --raw %s"
+                                      (shell-quote-argument (car (magit-git-lines "rev-list" "-n" "1" object)))))
+
+                      ;; Verify the tag(s) pointing to this commit.
+                      (mapcar (lambda (tag) (format "git verify-tag --raw %s" (shell-quote-argument tag)))
+                            (magit-git-lines "tag" "--points-at" object)))))
+
          (signatures (borg-queen--gpg-parse-verify-output
                       (split-string
-                       (shell-command-to-string (format "git verify-%s --raw %s" what (shell-quote-argument object)))
+                       (mapconcat 'shell-command-to-string commands "\n")
                        (rx "\n")))))
-    ;; @FIXME Match signatures against list of valid signatures for DRONE.
 
     (when (borg-queen--gpg-match-keys
            (mapcar 'car signatures)

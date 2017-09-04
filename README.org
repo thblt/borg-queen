@@ -2,6 +2,8 @@
 
 *This is pre-alpha software.  DO NOT USE.*
 
+[[screenshot.png][Screenshot]]
+
 Borg Queen is a package management frontend for [[https://github.com/emacscollective/borg][Borg]], providing a
 visual interface to manage and upgrade your drones, along with a few
 utility functions.

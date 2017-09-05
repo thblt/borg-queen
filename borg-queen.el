@@ -701,5 +701,7 @@ nil"
                    :test #'equalp))
 
 (provide 'borg-queen)
-
+;; Local Variables:
+;; indent-tabs-mode: nil
+;; End:
 ;;; borg-queen.el ends here

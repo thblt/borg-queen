@@ -30,6 +30,8 @@
 (require 'magit)
 (require 'tabulated-list)
 
+;;; Options
+
 (defgroup borg-queen nil
   "Manage and update Borg drones.")
 
@@ -102,6 +104,8 @@ This property can be overriden for specific drones with `borg-queen-drone-upgrad
   "!"
   "Symbol to use if this package has severe issues.")
 
+;;; Faces
+
 (defface borg-queen-state-ok-face
   '((t :foreground "LawnGreen"))
   "State for the OK state symbol"
@@ -152,8 +156,6 @@ This property can be overriden for specific drones with `borg-queen-drone-upgrad
   "Face for Type column when type is Drone."
   :group 'borg-queen-faces)
 
-;; Marks
-
 (defface borg-queen-mark-delimiter-face
   '((t :inherit 'bold))
   "@TODO"
@@ -173,6 +175,8 @@ This property can be overriden for specific drones with `borg-queen-drone-upgrad
   '((t :distant-foreground "MediumBlue" :foreground "DeepSkyBlue" :inverse-video t))
   "@TODO"
   :group 'borg-queen-faces)
+
+;;; Mode
 
 (defvar borg-queen-mode-map
   (let ((map (make-sparse-keymap)))
@@ -420,6 +424,9 @@ follows:
                    ))))
             (borg-clones))))
 
+
+;;;; Mark
+
 (defmacro borg-queen--with-selection (&rest body)
   "Execute BODY with each selected entry, binding DRONE to its name."
   `(mapc (lambda (drone) ,@body)
@@ -534,6 +541,8 @@ hasn't, it warns the user before marking with `yes-or-no-p'."
                         ,(car mark)
                         ,(cddr mark)))))))
 
+;;; Other commands
+
 (defun borg-queen-assimilate () "@TODO" (interactive))
 (defun borg-queen-clone () "@TODO" (interactive))
 
@@ -583,11 +592,15 @@ OBJECT is understood as a TAG name."
   "Assimilate DRONE."
   (message (format "Assimilate!!! %s" drone))
   )
+
 
 (defun borg-queen--aplist-get (akey pkey aplist)
   "Return the value associated to PKEY in a plist associated to AKEY in APLIST."
   (lax-plist-get (cdr (assoc akey aplist)) pkey))
+
 
+;;; GPG
+
 (defun borg-queen-gpg-verify (drone &optional object is-tag)
   "PGP-verify DRONE commit or tag OBJECT.
 
@@ -688,5 +701,7 @@ nil"
                    :test #'equalp))
 
 (provide 'borg-queen)
-
+;; Local Variables:
+;; indent-tabs-mode: nil
+;; End:
 ;;; borg-queen.el ends here

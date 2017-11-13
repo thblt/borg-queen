@@ -104,6 +104,17 @@ This property can be overriden for specific drones with `borg-queen-drone-upgrad
   "!"
   "Symbol to use if this package has severe issues.")
 
+;;; Variables
+
+(defvar borg-queen-dependencies (make-hash-table)
+  "An alist of (DRONE . DEPS).
+
+DRONE is the drone's name as a string (ie, the submodule path
+without lib/).
+
+DEPS is either T if the drone is directly required, or a list of
+drone names that depend on this drone." )
+
 ;;; Faces
 
 (defface borg-queen-state-ok-face
@@ -699,6 +710,40 @@ nil"
   (cl-intersection (borg-queen--gpg-collect-fingerprints keys)
                    (borg-queen--gpg-collect-fingerprints other-keys)
                    :test #'equalp))
+
+;;; Dependency graph
+
+(defmacro want-drone (&rest d)
+  "Declare required drones and their dependencies.
+
+This macro takes a list of symbols D and treats it as a list of
+drone names, optionnally followed by the list of their
+dependencies.  For example:
+
+(want-drone borg-queen (borg))
+
+Multiple drones may be declared in a single declaration:
+
+(want-drone drone1 (depA depB)
+            drone2
+            drone3 (depC depB))
+
+For that purpose, this macro is aliased to `want-drones'.
+
+At some point, the Queen will use this to identify orphans."
+(when d
+  (let ((drone (symbol-name (car d)))
+        (deps (cadr d)))
+    `(progn
+     (puthash ,drone t borg-queen-dependencies)
+     ,(when (listp deps)
+        `(mapc (lambda (d) (puthash (symbol-name d) (list ,drone) borg-queen-dependencies)) ,deps))
+
+     ,(-flatten-n 1 `(want-drone ,(funcall (if (listp deps) 'cddr 'cdr) d)))))
+         )
+       )
+
+(defalias 'want-drones 'want-drone)
 
 (provide 'borg-queen)
 ;; Local Variables:

@@ -44,40 +44,6 @@
   "If t, no package will be updated without a valid PGP signature."
   :group 'borg-queen)
 
-(defcustom borg-queen-pgp-global-keys
-  nil
-  "A list of PGP keys IDs unconditionally accepted to sign all packages.
-
-This should be either nil or your own key."
-  :group 'borg-queen)
-
-(defcustom borg-queen-upgrade-strategy
-  'auto
-  "Determine whether to upgrade to tags or commits.
-
-Value can be 'tag, 'head or 'auto.
-
-'tag (roughly) mimics the behavior of using Melpa Stable.  'head
-will always auto-upgrade to HEAD.  'auto is equivalent to 'tag if
-the repository contains at least one named tag, and 'head
-otherwise.
-
-This property can be overriden for specific drones with `borg-queen-drone-upgrade-strategies'"
-  :group 'borg-queen)
-
-(defcustom borg-queen-required-drones
-  nil
-  "A list of required packages.  This is used by
-  `borg-queen-why'."
-  :group 'borg-queen)
-
-(defcustom borg-queen-drone-upgrade-strategies
-  nil
-  "An alist of (DRONE-NAME UPGRADE-STRATEGY).  DRONE-NAME is a
-  string, UPGRADE-STRATEGY takes the same values as in
-  `borg-queen-upgrade-strategy'"
-  :group 'borg-queen)
-
 (defcustom borg-queen-mark-delimiter
   " ▸ "
   "@TODO")
@@ -107,12 +73,12 @@ This property can be overriden for specific drones with `borg-queen-drone-upgrad
 ;;; Variables
 
 (defvar borg-queen-dependencies (make-hash-table)
-  "An alist of (DRONE . DEPS).
+  "An alist of (DRONE . DEPS) cons.
 
 DRONE is the drone's name as a string (ie, the submodule path
 without lib/).
 
-DEPS is either T if the drone is directly required, or a list of
+DEPS is either t if the drone is directly required, or a list of
 drone names that depend on this drone." )
 
 ;;; Faces
@@ -187,6 +153,73 @@ drone names that depend on this drone." )
   "@TODO"
   :group 'borg-queen-faces)
 
+
+;;; Properties
+
+(defmacro borg-queen--def-property (what doc default &optional single &rest finalizer)
+  "Define a property for drones.  This defines two variables and a function:
+
+ - A fallback borg-queen-WHAT variable used as a default;
+ - A borg-queen-per-drone-WHAT plist;
+ - And a borg-queen-get-WHAT function.
+
+If SINGLE is non-nil, the function tries to read the value from
+.gitmodules using borg-get, otherwise it uses borg-get-all.
+
+If FINALIZER is non-nil, it is run at the end of the function in
+a let block binding it to the value.  It may be use to normalize
+the value or for error checking."
+
+  (cl-flet
+      ((mkname (prefix) (intern (concat prefix (symbol-name what)))))
+    (let*
+        ((funcname (mkname "borg-queen-get-"))
+         (plist (mkname "borg-queen-per-drone-"))
+         (fallback (mkname "borg-queen-")))
+
+      `(progn
+         (defvar ,fallback
+           ,default
+           ,doc)
+
+         (defvar ,plist
+           nil
+           ,(format "A plist to override `%s' for drones.  This has higher priority than settings in .gitmodules." what))
+
+         (defun ,funcname (drone)
+           ,(format
+             "For DRONE, determine the value to use for the %s property.
+
+It is the first set value among:
+
+ - the value at DRONE in the plist %s;
+ - the value at DRONE.%s in .gitmodules;
+ - the value of %s." what plist what fallback)
+
+           (let ((it (if (plist-member ,plist drone)
+                         (plist-get ,plist drone)
+                       (--if-let (,(if single 'borg-get 'borg-get-all) drone ,(symbol-name what))
+                           it
+                         ,fallback))))
+             it
+             ,@finalizer))))))
+
+(borg-queen--def-property upgrade-strategy
+                          "How to upgrade drones.
+
+Choices are 'tags, 'commits or 'auto."
+                          'auto
+                          t
+                          (let ((it (if (symbolp it) it (make-symbol it))))
+                            (unless (member it '(tags commits auto))
+                              (error "Invalid value `%s' as upgrade strategy for %s." it drone))
+                            it))
+
+(borg-queen--def-property signing-key
+                          "The PGP keys accepted for signing commits."
+                          '()
+                          nil)
+
 ;;; Mode
 
 (defvar borg-queen-mode-map
@@ -229,7 +262,7 @@ documentation for function `borg-queen--state'.")
 
 (defvar-local borg-queen--marks
   nil
-  "An alist of (drone mark)")
+  "A plist of drones and marks")
 
 (define-derived-mode borg-queen-mode tabulated-list-mode "Borg Queen"
   "Major mode for the Borg Queen."
@@ -264,8 +297,7 @@ documentation for function `borg-queen--state'.")
   (mapcar (lambda (item)
             (let* ((name (car item))
                    (state (cdr item))
-                   (required (member item borg-queen-required-drones))
-                   (mark (cdr (assoc name borg-queen--marks)))
+                   (mark (cdr (plist-get (intern name) borg-queen--marks)))
                    )
               `(,name
                 [
@@ -281,10 +313,8 @@ documentation for function `borg-queen--state'.")
 
                  ;; Name
                  ,(concat
-                   (propertize name 'face (if (and (not required)
-                                                   borg-queen-required-drones)
-                                              'borg-queen-package-name-face
-                                            'borg-queen-package-name-required-face))
+
+                   (propertize name 'face 'borg-queen-package-name-required-face)
 
                    (if mark
                        (concat
@@ -302,8 +332,8 @@ documentation for function `borg-queen--state'.")
                  ;; Upgrade strategy
                  ,(let ((strategy (borg-queen-get-upgrade-strategy name)))
                     (propertize
-                     (cond ((equal strategy 'tag) "Tag")
-                           ((equal strategy 'head) "Hea")
+                     (cond ((equal strategy 'tags) "Tag")
+                           ((equal strategy 'commits) "Hea")
                            ((equal strategy 'auto) "Aut"))
                      'face (if (equal strategy borg-queen-upgrade-strategy)
                                'shadow
@@ -331,11 +361,6 @@ documentation for function `borg-queen--state'.")
                  ]
                 )))
           borg-queen--state))
-
-(defun borg-queen-get-upgrade-strategy (drone)
-  "Return the upgrade strategy for drone.
-@FIXME"
-  borg-queen-upgrade-strategy)
 
 (defun borg-queen--state ()
   "Return the state of the Collective.
@@ -436,7 +461,8 @@ follows:
             (borg-clones))))
 
 
-;;;; Mark
+
+;;; Mark
 
 (defmacro borg-queen--with-selection (&rest body)
   "Execute BODY with each selected entry, binding DRONE to its name."
@@ -482,11 +508,11 @@ If DRONE already has a mark, it is replaced."
   (interactive)
   (borg-queen--with-selection
    (borg-queen--mark-for-checkout
-    drone
+    drones
     (borg-queen--aplist-get drone :latest-tag borg-queen--state)
     t)))
 
-   (defun borg-queen-mark-for-checkout-head ()
+(defun borg-queen-mark-for-checkout-head ()
   "Mark for checkout origin/HEAD"
   (interactive)
   (borg-queen--with-selection
@@ -604,13 +630,12 @@ OBJECT is understood as a TAG name."
   (message (format "Assimilate!!! %s" drone))
   )
 
-
 (defun borg-queen--aplist-get (akey pkey aplist)
   "Return the value associated to PKEY in a plist associated to AKEY in APLIST."
   (lax-plist-get (cdr (assoc akey aplist)) pkey))
 
 
-;;; GPG
+;;; GPG signatures
 
 (defun borg-queen-gpg-verify (drone &optional object is-tag)
   "PGP-verify DRONE commit or tag OBJECT.
@@ -631,8 +656,8 @@ If object is not provided, it defaults to \"HEAD\"."
          (commands (cons
                     ;; First chance: verify the provided object.
                     (format "git verify-%s --raw %s"
-                          (if is-tag "tag" "commit")
-                          (shell-quote-argument object))
+                            (if is-tag "tag" "commit")
+                            (shell-quote-argument object))
 
                     ;; Second chance: verify tag if commit, commit if tag
                     (if is-tag
@@ -642,7 +667,7 @@ If object is not provided, it defaults to \"HEAD\"."
 
                       ;; Verify the tag(s) pointing to this commit.
                       (mapcar (lambda (tag) (format "git verify-tag --raw %s" (shell-quote-argument tag)))
-                            (magit-git-lines "tag" "--points-at" object)))))
+                              (magit-git-lines "tag" "--points-at" object)))))
 
          (signatures (borg-queen--gpg-parse-verify-output
                       (split-string
@@ -711,7 +736,7 @@ nil"
                    (borg-queen--gpg-collect-fingerprints other-keys)
                    :test #'equalp))
 
-;;; Dependency graph
+;;; Dependency management
 
 (defmacro want-drone (&rest d)
   "Declare required drones and their dependencies.
@@ -735,13 +760,13 @@ At some point, the Queen will use this to identify orphans."
   (let ((drone (symbol-name (car d)))
         (deps (cadr d)))
     `(progn
-     (puthash ,drone t borg-queen-dependencies)
-     ,(when (listp deps)
-        `(mapc (lambda (d) (puthash (symbol-name d) (list ,drone) borg-queen-dependencies)) ,deps))
+       (puthash ,drone t borg-queen-dependencies)
+       ,(when (listp deps)
+          `(mapc (lambda (d) (puthash (symbol-name d) (list ,drone) borg-queen-dependencies)) ,deps))
 
-     ,(-flatten-n 1 `(want-drone ,(funcall (if (listp deps) 'cddr 'cdr) d)))))
-         )
-       )
+       ,(-flatten-n 1 `(want-drone ,(funcall (if (listp deps) 'cddr 'cdr) d)))))
+  )
+)
 
 (defalias 'want-drones 'want-drone)
 
